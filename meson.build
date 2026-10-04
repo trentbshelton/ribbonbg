@@ -1,5 +1,5 @@
 project(
-	'shaderbg',
+	'ribbonbg',
 	'c',
 	version: '0.0',
 	meson_version: '>=0.48.0',
@@ -50,10 +50,12 @@ foreach p : client_protocols
 	client_protos_headers += wayland_scanner_client.process(xml)
 endforeach
 
-deps = [wayland_client, GL, wayland_egl, egl]
+m = meson.get_compiler('c').find_library('m')
+
+deps = [wayland_client, GL, wayland_egl, egl, m]
 
 shaderbg = executable(
-	'shaderbg',
+	'ribbonbg',
 	['main.c'] + client_protos_src + client_protos_headers,
 	dependencies: deps,
 	install : true
