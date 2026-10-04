@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <math.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -131,6 +132,12 @@ struct state {
 
 	GLuint vertex_buffer;
 	GLuint vertex_array;
+
+	/* RetroArch XMB ribbon, drawn over the background shader */
+	GLuint ribbon_prog;
+	GLuint ribbon_buffer;
+	GLuint unif_ribbon_time;
+	GLsizei ribbon_vertices;
 
 	struct wl_list outputs;
 };
@@ -243,6 +250,20 @@ static void redraw(struct output *output)
 	glUniform4f(state->unif_iMouse, 0., 0., 0., 0.);
 
 	glDrawArrays(GL_TRIANGLE_FAN, 0, 3);
+
+	/* Ribbon: same blend as RetroArch's menu shader pipeline, which
+	 * brightens the background where the sheet folds */
+	glBindBuffer(GL_ARRAY_BUFFER, state->ribbon_buffer);
+	glUseProgram(state->ribbon_prog);
+	glVertexAttribPointer(
+			state->attr_pos, 2, GL_FLOAT, GL_FALSE, 0, (void *)0);
+	/* RetroArch advances its effect clock by 0.01 per frame at 60 fps */
+	glUniform1f(state->unif_ribbon_time,
+			fmodf(state->current_time * 0.6f, 65536.0f));
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_DST_COLOR, GL_ONE);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, state->ribbon_vertices);
+	glDisable(GL_BLEND);
 
 	if (!check_gl_errors("drawing")) {
 		exit(EXIT_FAILURE);
@@ -463,6 +484,127 @@ static const char frag_coda[] =
 		"void main() {\n"
 		"    mainImage(gl_FragColor, gl_FragCoord.xy);\n"
 		"}\n";
+
+/* Ribbon shaders from RetroArch (gfx/drivers/gl_shaders/
+ * legacy_pipeline_xmb_ribbon.glsl.vert.h, pipeline_xmb_ribbon.glsl.frag.h) */
+static const char ribbon_vertex_text[] =
+		"attribute vec2 VertexCoord;\n"
+		"uniform float time;\n"
+		"varying vec3 fragVertexEc;\n"
+		"float iqhash(float n) { return fract(sin(n) * 43758.5453); }\n"
+		"float noise(vec3 x) {\n"
+		"  vec3 p = floor(x);\n"
+		"  vec3 f = fract(x);\n"
+		"  f = f * f * (3.0 - 2.0 * f);\n"
+		"  float n = p.x + p.y * 57.0 + 113.0 * p.z;\n"
+		"  return mix(mix(mix(iqhash(n + 0.0), iqhash(n + 1.0), f.x),\n"
+		"                 mix(iqhash(n + 57.0), iqhash(n + 58.0), f.x), f.y),\n"
+		"             mix(mix(iqhash(n + 113.0), iqhash(n + 114.0), f.x),\n"
+		"                 mix(iqhash(n + 170.0), iqhash(n + 171.0), f.x), f.y), f.z);\n"
+		"}\n"
+		"float xmb_noise2(vec3 x) {\n"
+		"  return cos(x.z * 4.0) * cos(x.z + time / 10.0 + x.x);\n"
+		"}\n"
+		"void main() {\n"
+		"  vec3 v = vec3(VertexCoord.x, 0.0, VertexCoord.y);\n"
+		"  vec3 v2 = v;\n"
+		"  vec3 v3 = v;\n"
+		"  v.y = xmb_noise2(v2) / 8.0;\n"
+		"  v3.x -= time / 5.0;\n"
+		"  v3.x /= 4.0;\n"
+		"  v3.z -= time / 10.0;\n"
+		"  v3.y -= time / 100.0;\n"
+		"  v.z -= noise(v3 * 7.0) / 15.0;\n"
+		"  v.y -= noise(v3 * 7.0) / 15.0 + cos(v.x * 2.0 - time / 2.0) / 5.0 - 0.3;\n"
+		"  v.y = -v.y;\n"
+		"  fragVertexEc = v;\n"
+		"  gl_Position = vec4(v.xy, 0.0, 1.0);\n"
+		"}\n";
+
+static const char ribbon_fragment_text[] =
+		"uniform float time;\n"
+		"varying vec3 fragVertexEc;\n"
+		"void main() {\n"
+		"  vec3 up = vec3(0.0, 0.0, 1.0);\n"
+		"  vec3 X = dFdx(fragVertexEc);\n"
+		"  vec3 Y = -dFdy(fragVertexEc);\n"
+		"  vec3 normal = normalize(cross(X, Y));\n"
+		"  float c = 1.0 - dot(normal, up);\n"
+		"  c = (1.0 - cos(c * c)) / 13.0;\n"
+		"  gl_FragColor = vec4(c, c, c, 1.0);\n"
+		"}\n";
+
+#define RIBBON_ROWS 64
+#define RIBBON_COLS 64
+
+static GLuint compile_program(const char *vtext, const char *ftext,
+		const char *attr_name)
+{
+	GLint glstatus;
+	GLuint shaders[2] = {glCreateShader(GL_VERTEX_SHADER),
+			glCreateShader(GL_FRAGMENT_SHADER)};
+	const char *texts[2] = {vtext, ftext};
+	for (int i = 0; i < 2; i++) {
+		glShaderSource(shaders[i], 1, &texts[i], NULL);
+		glCompileShader(shaders[i]);
+		glGetShaderiv(shaders[i], GL_COMPILE_STATUS, &glstatus);
+		if (!glstatus) {
+			char log[1024] = {0};
+			GLsizei len;
+			glGetShaderInfoLog(shaders[i], 1024, &len, log);
+			fprintf(stderr, "Failed to compile ribbon shader: %.*s\n",
+					len, log);
+			exit(EXIT_FAILURE);
+		}
+	}
+	GLuint prog = glCreateProgram();
+	glAttachShader(prog, shaders[0]);
+	glAttachShader(prog, shaders[1]);
+	glBindAttribLocation(prog, 0, attr_name);
+	glLinkProgram(prog);
+	glGetProgramiv(prog, GL_LINK_STATUS, &glstatus);
+	if (!glstatus) {
+		char log[1024] = {0};
+		GLsizei len;
+		glGetProgramInfoLog(prog, 1000, &len, log);
+		fprintf(stderr, "Failed to link ribbon shader:\n%.*s\n", len, log);
+		exit(EXIT_FAILURE);
+	}
+	glDeleteShader(shaders[0]);
+	glDeleteShader(shaders[1]);
+	return prog;
+}
+
+/* Triangle-strip grid over [-1,1]^2, laid out like RetroArch's
+ * xmb_init_ribbon() */
+static void setup_ribbon(struct state *state)
+{
+	state->ribbon_prog = compile_program(
+			ribbon_vertex_text, ribbon_fragment_text, "VertexCoord");
+	state->unif_ribbon_time =
+			glGetUniformLocation(state->ribbon_prog, "time");
+
+	state->ribbon_vertices = (RIBBON_ROWS - 1) * RIBBON_COLS * 2;
+	GLfloat *verts = calloc((size_t)state->ribbon_vertices * 2,
+			sizeof(GLfloat));
+	size_t i = 0;
+	for (int r = 0; r < RIBBON_ROWS - 1; r++) {
+		for (int c = 0; c < RIBBON_COLS; c++) {
+			int col = r % 2 ? RIBBON_COLS - c - 1 : c;
+			GLfloat x = (GLfloat)col / (RIBBON_COLS - 1) * 2.0f - 1.0f;
+			verts[i++] = x;
+			verts[i++] = (GLfloat)r / (RIBBON_ROWS - 1) * 2.0f - 1.0f;
+			verts[i++] = x;
+			verts[i++] = (GLfloat)(r + 1) / (RIBBON_ROWS - 1) * 2.0f -
+				     1.0f;
+		}
+	}
+	glGenBuffers(1, &state->ribbon_buffer);
+	glBindBuffer(GL_ARRAY_BUFFER, state->ribbon_buffer);
+	glBufferData(GL_ARRAY_BUFFER,
+			(GLsizeiptr)(i * sizeof(GLfloat)), verts, GL_STATIC_DRAW);
+	free(verts);
+}
 
 int main(int argc, char **argv)
 {
@@ -750,6 +892,8 @@ int main(int argc, char **argv)
 			}};
 	glBufferData(GL_ARRAY_BUFFER, sizeof(vertex_data), vertex_data,
 			GL_STATIC_DRAW);
+
+	setup_ribbon(&state);
 
 	if (!check_gl_errors("loading shaders")) {
 		return EXIT_FAILURE;
