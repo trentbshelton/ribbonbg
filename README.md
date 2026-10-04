@@ -1,43 +1,57 @@
-# shaderbg
+# ribbonbg
 
-This program lets you render shaders as a wall paper.[0] It works on Wayland compositors that support wlr-layer-shell.
+Animated RetroArch XMB ribbon as a Wayland wallpaper.
 
+RetroArch's menu has a "ribbon" background: a sheet that slowly folds and
+drifts across a color gradient. I wanted it as my desktop wallpaper on
+Hyprland, but existing shader wallpaper tools only run full-screen fragment
+shaders, and the ribbon is not one. It is a 64x64 vertex mesh that gets
+bent in the vertex shader each frame and blended on top of the background.
 
-[0] This program was inspired by, has a similar command line interface as, [glpaper](https://hg.sr.ht/~scoopta/glpaper).
+ribbonbg is a fork of [shaderbg](https://git.sr.ht/~mstoeckl/shaderbg)
+by mstoeckl. shaderbg draws a Shadertoy-style fragment shader on the
+wlr-layer-shell background layer. This fork keeps that, and adds a second
+pass that draws RetroArch's ribbon over it:
 
-# Usage
+- the same 64x64 triangle-strip mesh RetroArch builds in `xmb.c`
+- RetroArch's ribbon vertex and fragment shaders, unchanged
+- RetroArch's blend mode (`GL_DST_COLOR, GL_ONE`), which brightens the
+  background where the sheet folds
+- RetroArch's clock rate (0.01 per frame at 60 fps), tied to real time so
+  the speed stays the same at lower frame rates
 
-```
-shaderbg [-h|--fps F|--layer l] output-name shader.frag
-```
-The parameter `layer` should be one of 'background', 'bottom', 'top', 'overlay'.
+Because of that blend mode the ribbon is invisible on pure black. The
+background shader needs some color.
 
-`output-name` should be either the name of an output (on Sway, these can be determined using `swaymsg -t get_outputs`) or the value `*` to match any output. To prevent the shell from expanding the `*` symbol, write `shaderbg '*' shader.frag`.
+## Usage
 
+    ribbonbg [--fps F] [--layer background|bottom|top|overlay] output background.frag
 
-`shaderbg` runs shaders that conform roughly to the Shadertoy interface[0]. That is,
-shaders should implement
-```
-void mainImage( out vec4 fragColor, in vec2 fragCoord )
-{
-}
-```
+`output` is a monitor name, or `'*'` for all monitors. The background shader
+uses the Shadertoy interface (`mainImage`, `iTime`, `iResolution`). Two are
+included in `shaders/`: `electric_blue.frag` (RetroArch's default theme) and
+`purple.frag`.
 
-Currently supported uniforms are
+Example, capped at 30 fps to save battery:
 
-* `float iTime` measured in
-seconds since the program started
-* `vec3 iResolution`, whose first two coordinates give the current frame size
-in pixels.
-* `float iTimeDelta`
-* `float iFrame`
-* `vec4 iMouse`
+    ribbonbg --fps 30 '*' shaders/electric_blue.frag
 
+On a laptop with Intel UHD 620 graphics this uses about 2% CPU.
 
-A few example shaders are provided in the demo/ folder.
+## Building
 
-[0] https://web.archive.org/web/20230301165944/https://www.shadertoy.com/howto
+Needs meson, wayland, EGL and OpenGL.
 
-# Installation
+    meson setup build
+    ninja -C build
 
-Build with meson. Requires EGL, OpenGL, and wayland.
+Works on compositors that support wlr-layer-shell (Hyprland, Sway, river,
+and others).
+
+## Credits
+
+- shaderbg by mstoeckl, GPL-3.0
+- the ribbon shaders and mesh layout come from
+  [RetroArch](https://github.com/libretro/RetroArch), GPL-3.0
+
+This fork is GPL-3.0 as well. See `COPYING`.
