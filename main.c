@@ -35,7 +35,7 @@
 #include <wayland-egl.h>
 
 static char usage[] = {
-		"shaderbg [-h|--fps F|--layer l|--speed S] output-name shader.frag\n"
+		"ribbonbg [-h|--fps F|--layer l] output-name background.frag\n"
 		"The provided fragment shaders should follow the Shadertoy API\n"};
 
 static const struct option options[] = {{"help", no_argument, NULL, 'h'},
@@ -367,7 +367,7 @@ static void output_done(void *data, struct wl_output *wl_output)
 				wl_compositor_create_surface(state->compositor);
 		output->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
 				state->layer_shell, output->surface,
-				output->output, state->layer, "shaderbg");
+				output->output, state->layer, "ribbonbg");
 		// todo: maybe propose size equal to given output size?
 
 		const uint32_t center = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
@@ -671,7 +671,7 @@ int main(int argc, char **argv)
 	state.output_name = argv[optind];
 	state.shader_path = argv[optind + 1];
 
-	fprintf(stderr, "Running shaderbg with output = '%s' shader = '%s' fps = %f layer = %d\n",
+	fprintf(stderr, "Running ribbonbg with output = '%s' shader = '%s' fps = %f layer = %d\n",
 			state.output_name, state.shader_path, state.fps,
 			state.layer);
 
