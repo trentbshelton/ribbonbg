@@ -178,25 +178,29 @@ static bool check_gl_errors(const char *where)
 
 static void destroy_output(struct output *output)
 {
+	/* tear down in reverse order of creation: EGL objects, then the
+	 * layer surface role, then the wl_surface it is attached to */
 	if (output->frame_callback) {
 		wl_callback_destroy(output->frame_callback);
 	}
 	if (output->egl_surface) {
+		eglMakeCurrent(output->state->egl_display, EGL_NO_SURFACE,
+				EGL_NO_SURFACE, EGL_NO_CONTEXT);
 		eglDestroySurface(output->state->egl_display,
 				output->egl_surface);
-	}
-	if (output->surface) {
-		wl_surface_destroy(output->surface);
-	}
-	if (output->layer_surface) {
-		zwlr_layer_surface_v1_destroy(output->layer_surface);
 	}
 	if (output->egl_window) {
 		wl_egl_window_destroy(output->egl_window);
 	}
+	if (output->layer_surface) {
+		zwlr_layer_surface_v1_destroy(output->layer_surface);
+	}
+	if (output->surface) {
+		wl_surface_destroy(output->surface);
+	}
 
 	free(output->str_name);
-	wl_output_destroy(output->output);
+	wl_output_release(output->output);
 	wl_list_remove(&output->link);
 	free(output);
 }
