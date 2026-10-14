@@ -255,8 +255,7 @@ static void redraw(struct output *output)
 
 	glDrawArrays(GL_TRIANGLE_FAN, 0, 3);
 
-	/* Ribbon: same blend as RetroArch's menu shader pipeline, which
-	 * brightens the background where the sheet folds */
+	/* Ribbon: translucent white, additive so overlapping folds glow */
 	glBindBuffer(GL_ARRAY_BUFFER, state->ribbon_buffer);
 	glUseProgram(state->ribbon_prog);
 	glVertexAttribPointer(
@@ -265,7 +264,7 @@ static void redraw(struct output *output)
 	glUniform1f(state->unif_ribbon_time,
 			fmodf(state->current_time * 0.6f, 65536.0f));
 	glEnable(GL_BLEND);
-	glBlendFunc(GL_DST_COLOR, GL_ONE);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, state->ribbon_vertices);
 	glDisable(GL_BLEND);
 
@@ -489,12 +488,16 @@ static const char frag_coda[] =
 		"    mainImage(gl_FragColor, gl_FragCoord.xy);\n"
 		"}\n";
 
-/* Ribbon shaders from RetroArch (gfx/drivers/gl_shaders/
- * legacy_pipeline_xmb_ribbon.glsl.vert.h, pipeline_xmb_ribbon.glsl.frag.h) */
+/* Ribbon shaders, based on RetroArch's (gfx/drivers/gl_shaders/
+ * legacy_pipeline_xmb_ribbon.glsl.vert.h, pipeline_xmb_ribbon.glsl.frag.h).
+ * The displacement is the same, but normals are computed per vertex and
+ * interpolated (smooth shading instead of RetroArch's flat dFdx facets),
+ * and the sheet is drawn as translucent white instead of brightening the
+ * background, so it shows up on dark backgrounds. */
 static const char ribbon_vertex_text[] =
 		"attribute vec2 VertexCoord;\n"
 		"uniform float time;\n"
-		"varying vec3 fragVertexEc;\n"
+		"varying vec3 fragNormal;\n"
 		"float iqhash(float n) { return fract(sin(n) * 43758.5453); }\n"
 		"float noise(vec3 x) {\n"
 		"  vec3 p = floor(x);\n"
@@ -509,8 +512,8 @@ static const char ribbon_vertex_text[] =
 		"float xmb_noise2(vec3 x) {\n"
 		"  return cos(x.z * 4.0) * cos(x.z + time / 10.0 + x.x);\n"
 		"}\n"
-		"void main() {\n"
-		"  vec3 v = vec3(VertexCoord.x, 0.0, VertexCoord.y);\n"
+		"vec3 ribbon(vec2 coord) {\n"
+		"  vec3 v = vec3(coord.x, 0.0, coord.y);\n"
 		"  vec3 v2 = v;\n"
 		"  vec3 v3 = v;\n"
 		"  v.y = xmb_noise2(v2) / 8.0;\n"
@@ -521,25 +524,28 @@ static const char ribbon_vertex_text[] =
 		"  v.z -= noise(v3 * 7.0) / 15.0;\n"
 		"  v.y -= noise(v3 * 7.0) / 15.0 + cos(v.x * 2.0 - time / 2.0) / 5.0 - 0.3;\n"
 		"  v.y = -v.y;\n"
-		"  fragVertexEc = v;\n"
+		"  return v;\n"
+		"}\n"
+		"void main() {\n"
+		"  const float e = 0.01;\n"
+		"  vec3 v = ribbon(VertexCoord);\n"
+		"  vec3 dx = ribbon(VertexCoord + vec2(e, 0.0)) - v;\n"
+		"  vec3 dz = ribbon(VertexCoord + vec2(0.0, e)) - v;\n"
+		"  fragNormal = cross(dx, dz);\n"
 		"  gl_Position = vec4(v.xy, 0.0, 1.0);\n"
 		"}\n";
 
 static const char ribbon_fragment_text[] =
-		"uniform float time;\n"
-		"varying vec3 fragVertexEc;\n"
+		"varying vec3 fragNormal;\n"
 		"void main() {\n"
-		"  vec3 up = vec3(0.0, 0.0, 1.0);\n"
-		"  vec3 X = dFdx(fragVertexEc);\n"
-		"  vec3 Y = -dFdy(fragVertexEc);\n"
-		"  vec3 normal = normalize(cross(X, Y));\n"
-		"  float c = 1.0 - dot(normal, up);\n"
-		"  c = (1.0 - cos(c * c)) / 13.0;\n"
-		"  gl_FragColor = vec4(c, c, c, 1.0);\n"
+		"  vec3 normal = normalize(fragNormal);\n"
+		"  float c = 1.0 - abs(normal.z);\n"
+		"  c = 1.0 - cos(c * c);\n"
+		"  gl_FragColor = vec4(1.0, 1.0, 1.0, 0.03 + c * 0.9);\n"
 		"}\n";
 
-#define RIBBON_ROWS 64
-#define RIBBON_COLS 64
+#define RIBBON_ROWS 128
+#define RIBBON_COLS 128
 
 static GLuint compile_program(const char *vtext, const char *ftext,
 		const char *attr_name)
