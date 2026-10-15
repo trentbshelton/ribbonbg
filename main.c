@@ -541,7 +541,7 @@ static const char ribbon_fragment_text[] =
 		"  vec3 normal = normalize(fragNormal);\n"
 		"  float c = 1.0 - abs(normal.z);\n"
 		"  c = 1.0 - cos(c * c);\n"
-		"  gl_FragColor = vec4(1.0, 1.0, 1.0, 0.03 + c * 0.9);\n"
+		"  gl_FragColor = vec4(1.0, 1.0, 1.0, 0.03 + c * 0.6);\n"
 		"}\n";
 
 #define RIBBON_ROWS 128
@@ -741,10 +741,23 @@ int main(int argc, char **argv)
 			//			EGL_COLOR_COMPONENT_TYPE_FLOAT_EXT,
 			EGL_NONE};
 
+	/* prefer 4x MSAA so the ribbon's edges are anti-aliased */
+	EGLint msaa_attrib_list[] = {EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+			EGL_RED_SIZE, 1, EGL_GREEN_SIZE, 1, EGL_BLUE_SIZE, 1,
+			EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_SAMPLE_BUFFERS, 1,
+			EGL_SAMPLES, 4, EGL_NONE};
+
 	int nret = 0;
-	if (!eglChooseConfig(state.egl_display, config_attrib_list, configs,
+	if (!eglChooseConfig(state.egl_display, msaa_attrib_list, configs,
 			    count, &nret) ||
 			nret < 1) {
+		fprintf(stderr, "No MSAA config, falling back to aliased\n");
+		nret = 0;
+	}
+	if (nret < 1 && (!eglChooseConfig(state.egl_display,
+					 config_attrib_list, configs, count,
+					 &nret) ||
+				    nret < 1)) {
 		fprintf(stderr, "Failed to get matching config\n");
 		return EXIT_FAILURE;
 	}
