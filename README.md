@@ -23,6 +23,8 @@ pass that draws a ribbon based on RetroArch's over it:
   so overlapping folds glow. RetroArch's blend (`GL_DST_COLOR, GL_ONE`)
   only brightens the background, so it disappears on dark colors. This one
   works on any background, dark ones included.
+- 4x MSAA so the ribbon's edges are anti-aliased (falls back to no
+  anti-aliasing if the GPU doesn't offer a multisampled config)
 
 The original RetroArch-exact version is commit `ce690b9`.
 
